@@ -19,6 +19,7 @@
 #define NPM13XX_CHG_STATUS_TC_MASK BIT(2)
 #define NPM13XX_CHG_STATUS_CC_MASK BIT(3)
 #define NPM13XX_CHG_STATUS_CV_MASK BIT(4)
+#define NPM13XX_CHG_STATUS_COMPLETE_MASK BIT(1)
 
 #if defined(CONFIG_DT_HAS_NORDIC_NPM1300_CHARGER_ENABLED)
 static const struct device *s_npm13xx_dev = DEVICE_DT_GET(DT_NODELABEL(npm1300_charger));
@@ -81,6 +82,83 @@ static bool prv_npm13xx_is_discharging(int charging_status) {
                              NPM13XX_CHG_STATUS_CV_MASK)) == 0;
 }
 
+static void prv_npm13xx_update_fuel_gauge_ext_state(int charging_status) {
+  static bool s_charge_current_initialized;
+  static int s_prev_charging_status = -1;
+  int err;
+
+  if (!s_charge_current_initialized) {
+    struct sensor_value desired_charge_current;
+
+    err = sensor_channel_get(s_npm13xx_dev, SENSOR_CHAN_GAUGE_DESIRED_CHARGING_CURRENT,
+                             &desired_charge_current);
+    if (err == 0) {
+      float charge_current_limit = sensor_value_to_float(&desired_charge_current);
+
+      union nrf_fuel_gauge_ext_state_info_data ext_data = {
+        .charge_current_limit = charge_current_limit,
+      };
+      err = nrf_fuel_gauge_ext_state_update(NRF_FUEL_GAUGE_EXT_STATE_INFO_CHARGE_CURRENT_LIMIT,
+                                            &ext_data);
+      if (err) {
+        MEMFAULT_LOG_DEBUG("Fuel gauge CHARGE_CURRENT_LIMIT update failed: %d", err);
+      }
+
+      ext_data.charge_term_current = charge_current_limit / 10.0f;
+      err = nrf_fuel_gauge_ext_state_update(NRF_FUEL_GAUGE_EXT_STATE_INFO_TERM_CURRENT, &ext_data);
+      if (err) {
+        MEMFAULT_LOG_DEBUG("Fuel gauge TERM_CURRENT update failed: %d", err);
+      }
+
+      s_charge_current_initialized = true;
+    } else {
+      MEMFAULT_LOG_DEBUG("Failed to read desired charge current: %d", err);
+    }
+  }
+
+  struct sensor_value vbus_present;
+  err = sensor_attr_get(s_npm13xx_dev,
+                        (enum sensor_channel)SENSOR_CHAN_NPM13XX_CHARGER_VBUS_STATUS,
+                        (enum sensor_attribute)SENSOR_ATTR_NPM13XX_CHARGER_VBUS_PRESENT,
+                        &vbus_present);
+  if (err == 0) {
+    enum nrf_fuel_gauge_ext_state_info_type vbus_state =
+      (vbus_present.val1 != 0) ? NRF_FUEL_GAUGE_EXT_STATE_INFO_VBUS_CONNECTED
+                               : NRF_FUEL_GAUGE_EXT_STATE_INFO_VBUS_DISCONNECTED;
+
+    err = nrf_fuel_gauge_ext_state_update(vbus_state, NULL);
+    if (err) {
+      MEMFAULT_LOG_DEBUG("Fuel gauge VBUS state update failed: %d", err);
+    }
+  } else {
+    MEMFAULT_LOG_DEBUG("Failed to read VBUS state: %d", err);
+  }
+
+  if (charging_status != s_prev_charging_status) {
+    union nrf_fuel_gauge_ext_state_info_data ext_data;
+
+    s_prev_charging_status = charging_status;
+
+    if (charging_status & NPM13XX_CHG_STATUS_COMPLETE_MASK) {
+      ext_data.charge_state = NRF_FUEL_GAUGE_CHARGE_STATE_COMPLETE;
+    } else if (charging_status & NPM13XX_CHG_STATUS_TC_MASK) {
+      ext_data.charge_state = NRF_FUEL_GAUGE_CHARGE_STATE_TRICKLE;
+    } else if (charging_status & NPM13XX_CHG_STATUS_CC_MASK) {
+      ext_data.charge_state = NRF_FUEL_GAUGE_CHARGE_STATE_CC;
+    } else if (charging_status & NPM13XX_CHG_STATUS_CV_MASK) {
+      ext_data.charge_state = NRF_FUEL_GAUGE_CHARGE_STATE_CV;
+    } else {
+      ext_data.charge_state = NRF_FUEL_GAUGE_CHARGE_STATE_IDLE;
+    }
+
+    err = nrf_fuel_gauge_ext_state_update(NRF_FUEL_GAUGE_EXT_STATE_INFO_CHARGE_STATE_CHANGE,
+                                          &ext_data);
+    if (err) {
+      MEMFAULT_LOG_DEBUG("Fuel gauge CHARGE_STATE_CHANGE update failed: %d", err);
+    }
+  }
+}
+
 int memfault_platform_get_stateofcharge(sMfltPlatformBatterySoc *soc) {
   // Float type required to retain precision when passing units of volts, amps, and degrees C to the
   // nRF fuel gauge API
@@ -91,6 +169,8 @@ int memfault_platform_get_stateofcharge(sMfltPlatformBatterySoc *soc) {
     MEMFAULT_LOG_ERROR("Failure reading charger sensors, error: %d", err);
     return -1;
   }
+
+  prv_npm13xx_update_fuel_gauge_ext_state(charging_status);
 
   int64_t time_delta_ms = k_uptime_delta(&s_ref_time);
   float time_delta_s = (float)time_delta_ms / 1000.0f;
