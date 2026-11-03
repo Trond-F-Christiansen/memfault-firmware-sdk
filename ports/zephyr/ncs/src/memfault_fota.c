@@ -312,17 +312,18 @@ static int prv_fota_modem_get_url(void) {
   // query. The key is used only while building/sending the download-URL request below and is
   // restored immediately after, so concurrent data uploads are not a concern in practice - FOTA
   // and upload both run on the periodic upload thread and are serialized there.
+  //
+  // When no modem project key is configured, the modem is treated as a non-primary component of
+  // the primary Memfault project (multi-component OTA): the API key is left untouched, and only
+  // the software type / version identifying the component are swapped.
   const char *modem_project_key = memfault_zephyr_fota_modem_project_key_get();
-  if (!modem_project_key) {
-    MEMFAULT_LOG_WARN("Modem project key not set. Set CONFIG_MEMFAULT_FOTA_MODEM_PROJECT_KEY "
-                      "or call memfault_zephyr_fota_modem_project_key_set().");
-    return 0;
-  }
 
   const char *saved_api_key = g_mflt_http_client_config.api_key;
   void (*saved_get_device_info)(sMemfaultDeviceInfo *) = g_mflt_http_client_config.get_device_info;
 
-  g_mflt_http_client_config.api_key = modem_project_key;
+  if (modem_project_key) {
+    g_mflt_http_client_config.api_key = modem_project_key;
+  }
   g_mflt_http_client_config.get_device_info = prv_get_modem_device_info;
 
   #if CONFIG_MEMFAULT_USE_NRF_CLOUD_COAP

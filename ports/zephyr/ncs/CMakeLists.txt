@@ -45,6 +45,7 @@ if(CONFIG_MEMFAULT_NRF_CONNECT_SDK)
     zephyr_ld_options(-Wl,--wrap=nrf_cloud_coap_fota_job_get)
     zephyr_ld_options(-Wl,--wrap=nrf_cloud_coap_fota_job_update)
     zephyr_ld_options(-Wl,--wrap=nrf_cloud_fota_poll_init)
+    include(${CMAKE_CURRENT_LIST_DIR}/fota_component.cmake)
   endif()
 
 endif()

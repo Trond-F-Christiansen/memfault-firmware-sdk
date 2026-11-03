@@ -95,8 +95,9 @@ config MEMFAULT_FOTA_MODEM_UPDATE
         default n
         help
           When enabled, memfault_zephyr_fota_start() also checks for modem
-          firmware updates using a dedicated Memfault project (see
-          CONFIG_MEMFAULT_FOTA_MODEM_PROJECT_KEY).
+          firmware updates, as a non-primary software type of the Memfault
+          project (see CONFIG_MEMFAULT_FOTA_MODEM_SOFTWARE_TYPE), or in a
+          dedicated Memfault project (see CONFIG_MEMFAULT_FOTA_MODEM_PROJECT_KEY).
 
           If both an application update and a modem update are pending,
           the application update is installed first (requiring one reboot),
@@ -110,9 +111,13 @@ if MEMFAULT_FOTA_MODEM_UPDATE
 config MEMFAULT_FOTA_MODEM_PROJECT_KEY
         string "Project key for the Memfault modem firmware project"
         help
-          The Memfault Project Key for the dedicated modem firmware project.
+          The Memfault Project Key for a dedicated modem firmware project.
           This is different from the application project key.
           Obtain this from Settings → General in your modem Memfault project.
+
+          If left empty (and no key is set at runtime), the modem firmware is
+          instead checked as a non-primary software type of the primary Memfault
+          project, using Multi-Component OTA.
 
 config MEMFAULT_FOTA_MODEM_SOFTWARE_TYPE
         string "Software type identifier for modem firmware"
